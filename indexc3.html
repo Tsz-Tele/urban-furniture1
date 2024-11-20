@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Photorealistic 3D Maps in Maps JavaScript models</title>
+    <style>
+      html,
+      body {
+        height:100%;
+        width:100%;
+        margin: 0;
+        padding: 0;
+      }
+
+      gmp-map-3d {
+        height: 90%;
+        width: 100%;
+      }
+
+      #controls {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        background: rgba(255,255,255,0.7);
+        padding: 10px;
+        border-radius: 5px;
+        max-height: 80vh;
+        overflow-y: auto;
+      }
+      .tool {
+        margin: 5px;
+        padding: 5px 10px;
+        background: #bab197;
+        color: white;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+        display: block;
+        width: 100%;
+      }
+      .tool.active {
+        background: #f5d47a;
+        box-shadow: 0 0 5px rgba(0,0,0,0.3);
+      }
+      #toggleDragMode {
+        background-color: #ff0000;
+      }
+      #toggleDragMode.active {
+        background-color: #ffd359;
+      }
+      #data-controls {
+        position: relative;
+        top: 10px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(255,255,255,0.7);
+        padding: 10px;
+        border-radius: 5px;
+        display: flex;
+        gap: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="data-controls">
+      <button class="tool" id="removet">Enable Remove Mode</button>
+      <button class="tool" id="importData">Import Data</button>
+      <button class="tool" id="exportData">Export Data</button>
+      <button class="tool" id="AddBenches">Benches</button>
+      <button class="tool" id="AddTree">Tree</button>
+      <button class="tool" id="AddFac">Playground Facilities</button>
+    </div>
+    <!--
+<gmp-map-3d heading="25" range="2500" tilt="45" center="37.7905,-122.3989,165">
+      <gmp-polyline-3d altitude-mode="relative-to-ground" stroke-color="rgba(25, 102, 210, 0.75)" stroke-width="10"></gmp-polyline-3d>
+
+  <gmp-model-3d position="37.72,-121.63,1000" altitude-mode="RELATIVE_TO_GROUND" orientation="0,270,0" scale="1,1,1" draggable="true"  src="./models/p2ar.glb"></gmp-model-3d>
+    </gmp-map-3d>
+    -->
+
+   <!-- <script async src="https://maps.googleapis.com/maps/api/js?key=AIzaSyD8qwoCYucQpTY9Xs14BAZy5t_8jUtWF18&v=alpha&libraries=maps3d,drawing"></script> -->
+    
+    <script>
+      (g=>{var h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",m=document,b=window;b=b[c]||(b[c]={});var d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,u=()=>h||(h=new Promise(async(f,n)=>{await (a=m.createElement("script"));e.set("libraries",[...r]+"");for(k in g)e.set(k.replace(/[A-Z]/g,t=>"_"+t[0].toLowerCase()),g[k]);e.set("callback",c+".maps."+q);a.src=`https://maps.${c}apis.com/maps/api/js?`+e;d[q]=f;a.onerror=()=>h=n(Error(p+" could not load."));a.nonce=m.querySelector("script[nonce]")?.nonce||"";m.head.append(a)}));d[l]?console.warn(p+" only loads once. Ignoring:",g):d[l]=(f,...n)=>r.add(f)&&u().then(()=>d[l](f,...n))})({
+        key: "AIzaSyD8qwoCYucQpTY9Xs14BAZy5t_8jUtWF18",
+        v: "alpha", libraries: "maps3d,drawing",
+        // Use the 'v' parameter to indicate the version to use (weekly, beta, alpha, etc.).
+        // Add other bootstrap parameters as needed, using camel case.
+      });  
+    </script>
+    <script type="text/javascript">
+    // Maps JS API is loaded using Dynamic Library import https://developers.google.com/maps/documentation/javascript/load-maps-js-api#dynamic-library-import
+      let isRemoveModeEnabled = false;
+      let currentTool = null;
+      let unsavedChanges = false;
+      let items = [];
+      removet.style.backgroundColor = '#ff0000';
+document.getElementById('removet').addEventListener('click', (e) => {
+        isRemoveModeEnabled = !isRemoveModeEnabled;
+        e.target.classList.toggle('active');
+        e.target.style.backgroundColor = isRemoveModeEnabled ? '#ffd359' : '#ff0000';
+        e.target.textContent = isRemoveModeEnabled ? 'Disable Remove Mode' : 'Enable Remove Mode';
+        // Do not change the current tool
+      });
+
+      document.querySelectorAll('.tool').forEach(tool => {
+        tool.addEventListener('click', (e) => {
+          if (e.target.id === 'finishRoadTool') {
+            finishRoadConstruction();
+          } else if (currentTool === e.target.id.replace('Tool', '')) {
+            currentTool = null;
+            e.target.classList.remove('active');
+          } else {
+            currentTool = e.target.id.replace('Tool', '');
+            document.querySelectorAll('.tool').forEach(t => t.classList.remove('active'));
+            e.target.classList.add('active');
+          }
+          unsavedChanges = true;
+        });
+      });
+
+      
+    var map;
+    async function init() {
+      const { Map3DElement, Model3DElement, Polygon3DElement, AltitudeMode, Orientation, Polyline3DElement } = await google.maps.importLibrary("maps3d");
+      await google.maps.importLibrary("drawing");
+
+      map = new Map3DElement({
+        center: {lat: 22.39904413543097, lng: 114.20043026407758, altitude: 100},
+        heading: 90,
+        tilt: 45,
+        defaultLabelsDisabled: true,
+      });
+
+      document.body.append(map);
+      //22.39881351608579, 114.20133737786728
+      const models = [
+        // A model with regular settings.
+        {
+          position: {lat: 22.39881351608579, lng: 114.20133737786728, altitude: 0},
+          orientation: {tilt: 270},
+        },
+        // Scaled down model.
+        {
+          position: {lat: 22.3985, lng: 114.2013, altitude: 0},
+          orientation: {tilt: 270},
+          scale: 0.8,
+        },
+        // Scaled up model.
+        {
+          position: {lat: 22.3982, lng: 114.2013, altitude: 0},
+          orientation: {tilt: 270},
+          scale: 1.2,
+        },
+        // A model with an additional transformation applied.
+        {
+          position: {lat: 22.3980, lng: 114.2013, altitude: 0},
+          orientation: {tilt: 270, roll: 90},
+        },
+        // Non-clamped to the ground model.
+        {
+          position: {lat: 22.3975, lng: 114.2010, altitude: 19},
+          altitudeMode: 'RELATIVE_TO_GROUND',
+          orientation: {tilt: 270},
+        },
+      ];
+
+      for (const {position, altitudeMode, orientation, scale} of models) {
+        const model = new Model3DElement({
+          src: './models/p2ar.glb',
+          position,
+          altitudeMode,
+          orientation,
+          scale,
+       draggable: true,
+        });
+
+        //map.append(model);
+      }
+
+//new google.maps.Polygon({
+//    map,
+//    src: 'models/p2ar.glb', 
+//    position: {lat: 37.75, lng: -121.63, altitude: 0},
+//    orientation: {tilt: 270},
+//    draggable: true,
+//    geodesic: true,
+//  });
+      const clist1 = [
+          {lat: 37.72, lng: -121.63},
+          {lat: 37.71, lng: -121.63},
+          {lat: 37.79925208843463, lng: -122.3976697250461},
+          {lat: 37.7989102378512, lng: -122.3983408725656},
+          {lat: 37.79887832784348, lng: -122.3987094864192},
+          {lat: 37.79786443410338, lng: -122.4066878788802},
+          {lat: 37.79549248916587, lng: -122.4032992702785},
+          {lat: 37.78861484290265, lng: -122.4019489189814},
+          {lat: 37.78618687561075, lng: -122.398969592545},
+          {lat: 37.7892310309145, lng: -122.3951458683092},
+          {lat: 37.7916358762409, lng: -122.3981969390652}
+        ];
+      const line1 = new Polyline3DElement({
+        coordinates:[{lat: 37.72, lng: -121.63},
+                     {lat: 37.71, lng: -121.63}],
+        strokeColor:"rgba(25, 102, 210, 0.75)", 
+        strokeWidth:10,
+        altitudeMode:"RELATIVE_TO_GROUND",
+        draggable: true,
+        });
+
+        map.append(line1);
+      
+      //-------------------------
+const polyline = document.querySelector('gmp-polyline-3d');
+
+      customElements.whenDefined(polyline.localName).then(() => {
+        polyline.coordinates = [
+          {lat: 37.72, lng: -121.63},
+          {lat: 37.71, lng: -121.63},
+          {lat: 37.79925208843463, lng: -122.3976697250461},
+          {lat: 37.7989102378512, lng: -122.3983408725656},
+          {lat: 37.79887832784348, lng: -122.3987094864192},
+          {lat: 37.79786443410338, lng: -122.4066878788802},
+          {lat: 37.79549248916587, lng: -122.4032992702785},
+          {lat: 37.78861484290265, lng: -122.4019489189814},
+          {lat: 37.78618687561075, lng: -122.398969592545},
+          {lat: 37.7892310309145, lng: -122.3951458683092},
+          {lat: 37.7916358762409, lng: -122.3981969390652}
+        ],
+	polyline.editable= true,
+	polyline.draggable= true,
+	polyline.clickable= true;
+      });
+
+    
+//-------------------
+      const drawingManager = new google.maps.drawing.DrawingManager({
+        drawingMode: google.maps.drawing.OverlayType.MARKER,
+        drawingControl: true,
+        drawingControlOptions: {
+          position: google.maps.ControlPosition.TOP_CENTER,
+          drawingModes: [
+            google.maps.drawing.OverlayType.MARKER,
+            google.maps.drawing.OverlayType.CIRCLE,
+            google.maps.drawing.OverlayType.POLYGON,
+            google.maps.drawing.OverlayType.POLYLINE,
+            google.maps.drawing.OverlayType.RECTANGLE,
+          ],
+        },
+        markerOptions: {
+          icon: "https://developers.google.com/maps/documentation/javascript/examples/full/images/beachflag.png",
+        },
+        circleOptions: {
+          fillColor: "#ffff00",
+          fillOpacity: 1,
+          strokeWeight: 5,
+          clickable: false,
+          editable: true,
+          zIndex: 1,
+        },
+      });
+      //drawingManager.setMap(map);
+var model2;
+      map.addEventListener('gmp-click', (event) => {
+        console.log(event.position);
+        console.log(currentTool);
+        // Do something with event.position.
+        
+        switch(currentTool) {
+          case 'AddBenches':
+            model2 = new Model3DElement({
+                src: './models/Benches.glb',
+                position:event.position,
+                orientation: {tilt: 270},
+              });
+
+            
+            items.push([event.position,currentTool]);
+            break;
+          case 'AddTree':
+            model2 = new Model3DElement({
+              src: './models/Tree.glb',
+              position:event.position,
+              orientation: {tilt: 270},
+            });
+            items.push([event.position,currentTool]);
+            break;
+          case 'AddFac':
+            model2 = new Model3DElement({
+              src: './models/Fac.glb',
+              position:event.position,
+              orientation: {tilt: 270},
+            });
+            items.push([event.position,currentTool]);
+            break;
+
+          default:
+            return;
+        }
+        map.append(model2);
+      });
+    //import and export
+      document.getElementById('importData').addEventListener('click', () => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json';
+        input.onchange = (event) => {
+          const file = event.target.files[0];
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const importedData = JSON.parse(e.target.result);
+            loadData(importedData);
+          };
+          reader.readAsText(file);
+        };
+        input.click();
+      });
+
+
+      document.getElementById('exportData').addEventListener('click', () => {
+        
+
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(items));
+        const downloadAnchorNode = document.createElement('a');
+        downloadAnchorNode.setAttribute("href", dataStr);
+        downloadAnchorNode.setAttribute("download", "locationsave.json");
+        document.body.appendChild(downloadAnchorNode);
+        downloadAnchorNode.click();
+        downloadAnchorNode.remove();
+        unsavedChanges = false;
+      });
+
+      function loadData(importedData) {
+        // Clear existing city data
+        items=[];
+
+        
+
+        // Recreate roads
+        
+        importedData.forEach(item => {
+            const category = item[1] || 'uncategorized';
+            
+          switch(category) {
+            case 'AddBenches':
+              model2 = new Model3DElement({
+                src: './models/Benches.glb',
+                position:event.position,
+                orientation: {tilt: 270},
+              });
+              items.push([item[0],item[1]]);
+              break;
+            case 'AddTree':
+              model2 = new Model3DElement({
+                src: './models/Tree.glb',
+                position:event.position,
+                orientation: {tilt: 270},
+              });
+              items.push([item[0],item[1]]);
+              break;
+            case 'AddFac':
+              model2 = new Model3DElement({
+                src: './models/Fac.glb',
+                position:event.position,
+                orientation: {tilt: 270},
+              });
+              items.push([item[0],item[1]]);
+              break;
+
+            default:
+              return;
+          }
+        });
+        // Recreate buildings
+        
+        unsavedChanges = false;
+      }
+
+
+      
+    }
+    init();
+
+    </script>
+  </body>
+</html>
