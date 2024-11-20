@@ -1,0 +1,1 @@
+You can see my testing api key in the html file, but that key has been disabled (actually deleted from the map api platform). Therefore you cannot use the key. Please use your own key when using the file.
